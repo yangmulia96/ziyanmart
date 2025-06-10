@@ -39,6 +39,55 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 
 
+// ==============================================================================
+// FUNGSI-FUNGSI UTILITAS GLOBAL (Diletakkan di luar komponen agar stabil)
+// ==============================================================================
+
+// Fungsi pembantu untuk memformat tanggal (YYYY-MM-DD menjadi DD/MM/YYYY)
+const formatDate = (dateString) => {
+  if (!dateString) return 'N/A';
+  try {
+    const [year, month, day] = dateString.split('-');
+    const dateObj = new Date(year, month - 1, day);
+    if (isNaN(dateObj.getTime())) {
+      return 'Invalid Date';
+    }
+    return new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(dateObj);
+  } catch (e) {
+    console.error("Error formatting date:", dateString, e);
+    return 'N/A';
+  }
+};
+
+// Fungsi pembantu untuk memformat angka menjadi format mata uang Rupiah
+const formatCurrency = (amount) => {
+  if (typeof amount !== 'number' || isNaN(amount)) return 'Rp. 0';
+  return amount.toLocaleString('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+};
+
+// Fungsi pembantu untuk mengubah string mata uang menjadi angka
+const parseCurrency = (formattedString) => {
+  if (!formattedString) return 0;
+  // Menghapus 'Rp.', spasi, dan semua tanda titik ribuan. Mengganti koma desimal dengan titik.
+  const cleanedString = String(formattedString).replace(/Rp\.\s?|\./g, '').replace(/,/g, '.');
+  return parseFloat(cleanedString) || 0;
+};
+
+// Fungsi pembantu: Memformat angka dengan pemisah ribuan tanpa simbol mata uang
+const formatNumberWithThousandsSeparator = (amount) => { 
+  const num = typeof amount === 'string' ? parseCurrency(amount) : amount;
+  if (typeof num !== 'number' || isNaN(num)) return '';
+  return num.toLocaleString('id-ID', { maximumFractionDigits: 0 });
+};
+
+// ==============================================================================
+
+
 // Komponen utama aplikasi
 function App() {
   const [activeTab, setActiveTab] = useState('daily');
@@ -49,65 +98,17 @@ function App() {
   const [email, setEmail] = useState(''); // State untuk input email
   const [password, setPassword] = useState(''); // State untuk input password
 
+  // State untuk modal dan editing
+  const [modalMessage, setModalMessage] = useState('');
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedInvoiceForHistory, setSelectedInvoiceForHistory] = useState(null);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [selectedDailyRecordForDetails, setSelectedDailyRecordForDetails] = useState(null);
+  const [isDailyDetailModalOpen, setIsDailyDetailModalOpen] = useState(false);
+  const [editingDailyRecordId, setEditingDailyRecordId] = useState(null); 
+  const [editingHutangEntryId, setEditingHutangEntryId] = useState(null); 
 
-  // Refs for PDF export
-  const laporanRef = useRef();
-
-  // State untuk menyimpan respons AI
-  const [geminiReminderText, setGeminiReminderText] = useState('');
-  const [isGeneratingReminder, setIsGeneratingReminder] = useState(false);
-  const [geminiAnalysisText, setGeminiAnalysisText] = useState('');
-  const [isGeneratingAnalysis, setIsGeneratingAnalysis] = useState(false);
-
-
-  // --- Fungsi pembantu untuk memformat tanggal (YYYY-MM-DD menjadi DD/MM/YYYY) ---
-  const formatDate = useCallback((dateString) => {
-    if (!dateString) return 'N/A';
-    try {
-      const [year, month, day] = dateString.split('-');
-      const dateObj = new Date(year, month - 1, day);
-      if (isNaN(dateObj.getTime())) {
-        return 'Invalid Date';
-      }
-      return new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(dateObj);
-    } catch (e) {
-      console.error("Error formatting date:", dateString, e);
-      return 'N/A';
-    }
-  }, []);
-
-  // --- Fungsi pembantu untuk memformat angka menjadi format mata uang Rupiah ---
-  const formatCurrency = useCallback((amount) => {
-    if (typeof amount !== 'number' || isNaN(amount)) return 'Rp. 0';
-    return amount.toLocaleString('id-ID', {
-      style: 'currency',
-      currency: 'IDR',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    });
-  }, []);
-
-  // --- Fungsi pembantu untuk mengubah string mata uang menjadi angka ---
-  const parseCurrency = useCallback((formattedString) => {
-    if (!formattedString) return 0;
-    // Menghapus 'Rp.', spasi, dan semua tanda titik ribuan. Mengganti koma desimal dengan titik.
-    const cleanedString = String(formattedString).replace(/Rp\.\s?|\./g, '').replace(/,/g, '.');
-    return parseFloat(cleanedString) || 0;
-  }, []);
-
-  // --- Fungsi pembantu baru: Memformat angka dengan pemisah ribuan tanpa simbol mata uang ---
-  // Perbaikan: Menambahkan 'parseCurrency' ke dependency array
-  const formatNumberWithThousandsSeparator = useCallback((amount) => { 
-    // Convert to number first to ensure proper formatting
-    // Gunakan parseCurrency di sini untuk memastikan input string seperti "1.000" ditangani dengan benar
-    const num = typeof amount === 'string' ? parseCurrency(amount) : amount;
-    if (typeof num !== 'number' || isNaN(num)) return '';
-    // Use Intl.NumberFormat to handle thousands separators
-    return num.toLocaleString('id-ID', { maximumFractionDigits: 0 });
-  }, [parseCurrency]); // <--- Dependency 'parseCurrency' DITAMBAHKAN di sini
-
-
-  // State untuk Pencatatan Harian
+  // State untuk pencatatan harian
   const [dailyRecords, setDailyRecords] = useState([]);
   const [newDailyEntry, setNewDailyEntry] = useState({
     tanggal: '',
@@ -130,7 +131,7 @@ function App() {
   const [currentSalesPaymentReturnPotongan, setCurrentSalesPaymentReturnPotongan] = useState(0);
   const [currentSalesPaymentReturnPotonganDisplay, setCurrentSalesPaymentReturnPotonganDisplay] = useState('');
 
-  // State untuk Manajemen Hutang
+  // State untuk manajemen hutang
   const [incomingGoodsDebtRecords, setIncomingGoodsDebtRecords] = useState([]);
   const [newHutangEntry, setNewHutangEntry] = useState({
     tanggalHutang: '',
@@ -142,14 +143,26 @@ function App() {
   });
   const [jumlahBarangMasukInputDisplay, setJumlahBarangMasukInputDisplay] = useState('');
 
-  const [modalMessage, setModalMessage] = useState('');
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [selectedInvoiceForHistory, setSelectedInvoiceForHistory] = useState(null);
-  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
-  const [selectedDailyRecordForDetails, setSelectedDailyRecordForDetails] = useState(null);
-  const [isDailyDetailModalOpen, setIsDailyDetailModalOpen] = useState(false);
-  const [editingDailyRecordId, setEditingDailyRecordId] = useState(null);
-  const [editingHutangEntryId, setEditingHutangEntryId] = useState(null);
+  // State untuk laporan bulanan
+  const currentMonth = new Date().getMonth() + 1;
+  const currentYear = new Date().getFullYear();
+  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const [selectedYear, setSelectedYear] = useState(currentYear);
+  const years = useMemo(() => Array.from({ length: 5 }, (_, i) => currentYear - 2 + i), [currentYear]);
+
+  // State untuk ringkasan hutang per sales (untuk menampilkan/menyembunyikan detail invoice)
+  const [expandedSalesNames, setExpandedSalesNames] = useState([]); 
+
+
+  // Refs for PDF export
+  const laporanRef = useRef();
+
+  // State untuk menyimpan respons AI
+  const [geminiReminderText, setGeminiReminderText] = useState('');
+  const [isGeneratingReminder, setIsGeneratingReminder] = useState(false);
+  const [geminiAnalysisText, setGeminiAnalysisText] = useState(''); // Digunakan di Laporan Bulanan
+  const [isGeneratingAnalysis, setIsGeneratingAnalysis] = useState(false); // Digunakan di Laporan Bulanan
+
 
   // --- Logika Modal & Laporan ---
   const showModal = useCallback((message) => {
@@ -246,7 +259,8 @@ function App() {
 
   // --- Efek untuk menghitung Saldo/Baki Semalam otomatis (Diperbarui untuk Hari Libur) ---
   useEffect(() => {
-    if (newDailyEntry.tanggal && dailyRecords.length > 0) {
+    // Memeriksa apakah newDailyEntry.tanggal sudah diisi dan ada dailyRecords
+    if (newDailyEntry.tanggal && dailyRecords.length > 0) { 
         const currentDate = new Date(newDailyEntry.tanggal);
         currentDate.setHours(0, 0, 0, 0); // Normalisasi ke awal hari
 
@@ -285,7 +299,7 @@ function App() {
             bakiSemalam: 0,
         }));
     }
-}, [newDailyEntry.tanggal, dailyRecords, editingDailyRecordId]);
+}, [newDailyEntry.tanggal, dailyRecords]); 
 
 
   // --- Perhitungan Otomatis untuk Pencatatan Harian ---
@@ -326,8 +340,7 @@ function App() {
   }, [
     newDailyEntry.saldoHariIni, newDailyEntry.uangSimpan,
     currentExpenseAmount, currentSalesPaymentAmount, currentSalesPaymentReturnPotongan,
-    newHutangEntry.jumlahBarangMasuk,
-    formatNumberWithThousandsSeparator
+    newHutangEntry.jumlahBarangMasuk
   ]);
 
 
@@ -345,7 +358,7 @@ function App() {
       ...prev,
       [fieldName]: numericValue,
     }));
-  }, [parseCurrency, formatNumberWithThousandsSeparator]);
+  }, []); 
 
   // Digunakan untuk state numerik langsung (e.g., currentExpenseAmount)
   const handleDirectNumericInputChange = useCallback((e, setDisplayState, setNumericState) => {
@@ -357,19 +370,19 @@ function App() {
     
     // Simpan nilai numerik aktual ke state
     setNumericState(numericValue);
-  }, [parseCurrency, formatNumberWithThousandsSeparator]);
+  }, []); 
 
   // Saat input kehilangan fokus, terapkan format mata uang lengkap (Rp.)
   const handleFormattedInputBlur = useCallback((e, valueToFormat, setDisplayState) => {
     setDisplayState(formatCurrency(valueToFormat));
-  }, [formatCurrency]);
+  }, []); // formatCurrency adalah global, tidak perlu di dependency array
 
   // Saat input mendapatkan fokus, tampilkan angka dengan pemisah ribuan (tanpa Rp.)
   const handleFormattedInputFocus = useCallback((e, valueToDisplay, setDisplayState) => {
     e.target.select();
     // Tampilkan nilai yang diformat dengan pemisah ribuan, agar lebih mudah diedit
     setDisplayState(formatNumberWithThousandsSeparator(valueToDisplay));
-  }, [formatNumberWithThousandsSeparator]);
+  }, []); // formatNumberWithThousandsSeparator adalah global, tidak perlu di dependency array
 
 
   // --- Logika Pencatatan Harian ---
@@ -586,7 +599,7 @@ function App() {
     } else {
         setNewHutangEntry(prev => ({ ...prev, [name]: value }));
     }
-  }, [parseCurrency, formatNumberWithThousandsSeparator]);
+  }, []); 
 
   const handleJumlahBarangMasukBlur = useCallback((e) => {
     handleFormattedInputBlur(e, newHutangEntry.jumlahBarangMasuk, setJumlahBarangMasukInputDisplay);
@@ -676,11 +689,6 @@ function App() {
     }
   };
 
-  const currentMonth = new Date().getMonth() + 1;
-  const currentYear = new Date().getFullYear();
-  const [selectedMonth, setSelectedMonth] = useState(currentMonth);
-  const [selectedYear, setSelectedYear] = useState(currentYear);
-
   const filteredDailyRecords = useMemo(() => {
     return dailyRecords.filter(record => {
       const recordDate = new Date(record.tanggal);
@@ -769,9 +777,6 @@ function App() {
   }, [incomingGoodsDebtRecords]);
 
 
-  const years = useMemo(() => Array.from({ length: 5 }, (_, i) => currentYear - 2 + i), [currentYear]);
-
-
   // Fungsi ini digunakan di UI (tombol "Unduh Laporan PDF")
   const handleDownloadPdf = useCallback(() => {
     const element = laporanRef.current;
@@ -791,7 +796,7 @@ function App() {
     } else {
         showModal("Tidak ada konten laporan untuk diunduh.");
     }
-  }, [selectedMonth, selectedYear, showModal]);
+  }, [selectedMonth, selectedYear, showModal]); // Menghapus formatCurrency dari dependency array
 
   const handleLogout = async () => {
     try {
@@ -844,8 +849,6 @@ function App() {
       let errorMessage = 'Gagal login. Periksa email dan kata sandi Anda.';
       if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
         errorMessage = 'Email atau kata sandi salah.';
-      } else if (error.code === 'auth/invalid-email') {
-        errorMessage = 'Format email tidak valid.';
       }
       showModal(errorMessage);
     }
@@ -944,7 +947,7 @@ function App() {
     } finally {
       setIsGeneratingAnalysis(false);
     }
-  }, [formatCurrency, monthlyTotals, dailyRecords, selectedMonth, selectedYear]);
+  }, [monthlyTotals, dailyRecords, selectedMonth, selectedYear]); // formatCurrency adalah global, tidak perlu di dependency array
 
 
   // --- UI Utama Aplikasi ---
@@ -1471,14 +1474,20 @@ function App() {
                             </ul>
                           ) : 'N/A'}
                         </td>
-                        {/* Perbaikan di sini: Menggunakan entry.totalPengeluaranHarian */}
+                        {/* Menggunakan entry.totalPengeluaranHarian */}
                         <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-red-700 font-semibold">{formatCurrency(entry.totalPengeluaranHarian)}</td>
                         <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium">
                           <button
                             onClick={() => handleEditDailyEntry(entry.id)}
-                            className="text-blue-600 hover:text-blue-900 transition duration-150 ease-in-out"
+                            className="text-blue-600 hover:text-blue-900 transition duration-150 ease-in-out mr-2"
                           >
                             Edit
+                          </button>
+                           <button
+                            onClick={() => showDailyDetailModal(entry)} // Tambahkan tombol lihat detail
+                            className="text-indigo-600 hover:text-indigo-900 transition duration-150 ease-in-out"
+                          >
+                            Lihat Detail
                           </button>
                         </td>
                       </tr>
@@ -1675,13 +1684,11 @@ function App() {
                                 <React.Fragment key={salesName}>
                                     <tr className="hover:bg-green-50 transition duration-100 ease-in-out cursor-pointer" onClick={() => {
                                         // Toggle detail invoices for this sales
-                                        const updatedSummary = { ...debtSummaryBySales };
-                                        updatedSummary[salesName].showInvoices = !updatedSummary[salesName].showInvoices;
-                                        // Karena debtSummaryBySales adalah memoized, kita perlu membuat salinan baru
-                                        // dari data hutang atau memaksa re-render dengan cara lain jika ingin UI toggle
-                                        // Untuk tujuan demo, ini cukup memicu update state lain
-                                        // yang akan menghitung ulang useMemo ini.
-                                        setIncomingGoodsDebtRecords(prev => [...prev]); 
+                                        setExpandedSalesNames(prev => 
+                                          prev.includes(salesName)
+                                            ? prev.filter(name => name !== salesName)
+                                            : [...prev, salesName]
+                                        );
                                     }}>
                                         <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-bold text-gray-900">{salesName}</td>
                                         <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700">{formatCurrency(data.totalDebt)}</td>
@@ -1689,12 +1696,12 @@ function App() {
                                         <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700">{formatDate(data.lastVisitDate)}</td>
                                         <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium">
                                             <button className="text-blue-600 hover:text-blue-900 transition duration-150 ease-in-out">
-                                                {data.showInvoices ? 'Sembunyikan' : 'Lihat Invoice'}
+                                                {expandedSalesNames.includes(salesName) ? 'Sembunyikan' : 'Lihat Invoice'}
                                             </button>
                                         </td>
                                     </tr>
                                     {/* Detail Invoice untuk Sales Tertentu */}
-                                    {data.showInvoices && data.invoices.map(invoice => (
+                                    {expandedSalesNames.includes(salesName) && data.invoices.map(invoice => (
                                         <tr key={invoice.id} className="bg-gray-50 hover:bg-gray-100 transition duration-100 ease-in-out text-sm">
                                             <td className="pl-8 pr-3 py-2 whitespace-nowrap font-medium text-gray-700"></td> {/* Indent */}
                                             <td colSpan="4" className="pr-3 py-2">
@@ -1771,6 +1778,171 @@ function App() {
                 )}
             </div>
           </div>
+        )}
+
+        {/* --- Konten Tab Laporan Bulanan (DIKEMBALIKAN) --- */}
+        {activeTab === 'report' && (
+            <div id="monthly-report-section" ref={laporanRef} className="p-4 sm:p-6 bg-white rounded-lg shadow-lg">
+                <h2 className="text-2xl sm:text-3xl font-bold text-blue-700 mb-6 text-center">Laporan Keuangan Bulanan</h2>
+
+                {/* Filter Bulan dan Tahun */}
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                    <div>
+                        <label htmlFor="month-select" className="sr-only">Pilih Bulan</label>
+                        <select
+                            id="month-select"
+                            value={selectedMonth}
+                            onChange={(e) => setSelectedMonth(e.target.value)}
+                            className="block w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base"
+                        >
+                            <option value="1">Januari</option>
+                            <option value="2">Februari</option>
+                            <option value="3">Maret</option>
+                            <option value="4">April</option>
+                            <option value="5">Mei</option>
+                            <option value="6">Juni</option>
+                            <option value="7">Juli</option>
+                            <option value="8">Agustus</option>
+                            <option value="9">September</option>
+                            <option value="10">Oktober</option>
+                            <option value="11">November</option>
+                            <option value="12">Desember</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label htmlFor="year-select" className="sr-only">Pilih Tahun</label>
+                        <select
+                            id="year-select"
+                            value={selectedYear}
+                            onChange={(e) => setSelectedYear(e.target.value)}
+                            className="block w-full px-4 py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-base"
+                        >
+                            {years.map(year => (
+                                <option key={year} value={year}>{year}</option>
+                            ))}
+                        </select>
+                    </div>
+                </div>
+
+                {/* Ringkasan Laporan */}
+                <div className="mb-8 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-green-50 p-6 rounded-lg shadow-md border border-green-200">
+                        <h3 className="text-xl font-semibold text-green-800 mb-3">Pemasukan & Pengeluaran</h3>
+                        <p className="flex justify-between items-center text-gray-700 py-1">
+                            <span>Total Penjualan Tunai:</span>
+                            <span className="font-semibold text-green-700">{formatCurrency(monthlyTotals.totalPenjualanTunai)}</span>
+                        </p>
+                        <p className="flex justify-between items-center text-gray-700 py-1">
+                            <span>Total Pengeluaran Harian:</span>
+                            <span className="font-semibold text-red-700">{formatCurrency(monthlyTotals.totalPengeluaranHarian)}</span>
+                        </p>
+                        <p className="flex justify-between items-center text-gray-700 py-1">
+                            <span>Total Pembayaran Hutang Sales:</span>
+                            <span className="font-semibold text-red-700">{formatCurrency(monthlyTotals.totalPembayaranHutangSalesDetail)}</span>
+                        </p>
+                        <p className="flex justify-between items-center text-gray-700 py-1">
+                            <span>Total Uang Disimpan:</span>
+                            <span className="font-semibold text-blue-700">{formatCurrency(monthlyTotals.totalUangSimpan)}</span>
+                        </p>
+                    </div>
+                    <div className="bg-yellow-50 p-6 rounded-lg shadow-md border border-yellow-200">
+                        <h3 className="text-xl font-semibold text-yellow-800 mb-3">Ringkasan Hutang</h3>
+                        <p className="flex justify-between items-center text-gray-700 py-1">
+                            <span>Total Hutang Baru Dibuat:</span>
+                            <span className="font-semibold text-yellow-700">{formatCurrency(monthlyTotals.totalHutangBaruDibuat)}</span>
+                        </p>
+                        <p className="flex justify-between items-center text-gray-700 py-1">
+                            <span>Total Sisa Hutang Keseluruhan:</span>
+                            <span className="font-bold text-red-700">{formatCurrency(totalOutstandingHutang)}</span>
+                        </p>
+                        <p className="flex justify-between items-center text-gray-700 py-1">
+                            <span>Jumlah Invoice Belum Lunas:</span>
+                            <span className="font-semibold text-blue-700">{outstandingInvoices.length}</span>
+                        </p>
+                    </div>
+                </div>
+
+                {/* Tabel Detail Transaksi Bulanan */}
+                <h3 className="text-xl font-bold text-gray-800 mb-4 text-center">Detail Transaksi Bulan Ini</h3>
+                <div className="overflow-x-auto mb-8 rounded-xl shadow-xl border border-gray-200">
+                    <table className="min-w-full divide-y divide-blue-200">
+                        <thead className="bg-blue-500 text-white">
+                            <tr>
+                                <th className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider rounded-tl-xl">Tanggal</th>
+                                <th className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Penjualan Tunai</th>
+                                <th className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Pengeluaran</th>
+                                <th className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Pembayaran Hutang</th>
+                                <th className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Uang Simpan</th>
+                                <th className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Saldo Hari Ini</th>
+                                <th className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider rounded-tr-xl">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {filteredDailyRecords.length === 0 ? (
+                                <tr>
+                                    <td colSpan="7" className="px-3 py-4 sm:px-6 sm:py-6 whitespace-nowrap text-sm sm:text-base text-gray-500 text-center italic">
+                                        Tidak ada data untuk bulan dan tahun ini.
+                                    </td>
+                                </tr>
+                            ) : (
+                                filteredDailyRecords.map(record => (
+                                    <tr key={record.id} className="hover:bg-blue-50 transition duration-100 ease-in-out">
+                                        <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium text-gray-900">{formatDate(record.tanggal)}</td>
+                                        <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-green-700">{formatCurrency(record.penjualanTunaiCalculated)}</td>
+                                        <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-red-700">{formatCurrency(record.totalPengeluaranHarian)}</td>
+                                        <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-red-700">{formatCurrency(record.salesPayments.reduce((sum, p) => sum + p.amount + (p.returnPotongan || 0), 0))}</td>
+                                        <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-blue-700">{formatCurrency(record.uangSimpan)}</td>
+                                        <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-900 font-semibold">{formatCurrency(record.saldoHariIni)}</td>
+                                        <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium">
+                                            <button
+                                                onClick={() => showDailyDetailModal(record)}
+                                                className="text-indigo-600 hover:text-indigo-900 transition duration-150 ease-in-out"
+                                            >
+                                                Lihat Detail
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* Bagian Analisis AI Bulanan */}
+                <div className="mt-8 p-4 sm:p-6 bg-blue-50 rounded-lg shadow-inner border border-blue-200">
+                    <h3 className="text-xl sm:text-2xl font-bold text-blue-700 mb-4">🧠 Analisis Keuangan Bulanan AI 🧠</h3>
+                    <p className="text-gray-700 mb-4">Dapatkan wawasan dan saran berdasarkan data keuangan bulan ini.</p>
+                    <button
+                        onClick={generateMonthlyAnalysis}
+                        disabled={isGeneratingAnalysis}
+                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition duration-200 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {isGeneratingAnalysis ? 'Menganalisis...' : 'Minta Analisis AI'}
+                    </button>
+                    {geminiAnalysisText && (
+                        <div className="mt-4 p-4 bg-white rounded-lg border border-gray-300 shadow-sm">
+                            <h4 className="font-semibold text-gray-800 mb-2">Analisis AI:</h4>
+                            <p className="whitespace-pre-wrap text-gray-700 text-sm">{geminiAnalysisText}</p>
+                            <button
+                                onClick={() => document.execCommand('copy')}
+                                className="mt-3 bg-gray-200 hover:bg-gray-300 text-gray-800 text-xs font-semibold py-1 px-2 rounded-lg"
+                            >
+                                Salin Teks
+                            </button>
+                        </div>
+                    )}
+                </div>
+
+                {/* Tombol Unduh PDF */}
+                <div className="mt-8 text-center">
+                    <button
+                        onClick={handleDownloadPdf}
+                        className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg shadow-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-opacity-75 transition duration-200 ease-in-out transform hover:scale-105"
+                    >
+                        Unduh Laporan PDF
+                    </button>
+                </div>
+            </div>
         )}
       </div>
     </div>

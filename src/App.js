@@ -87,15 +87,6 @@ function App() {
     });
   }, []);
 
-  // --- Fungsi pembantu baru: Memformat angka dengan pemisah ribuan tanpa simbol mata uang ---
-  const formatNumberWithThousandsSeparator = useCallback((amount) => {
-    // Convert to number first to ensure proper formatting
-    const num = typeof amount === 'string' ? parseCurrency(amount) : amount;
-    if (typeof num !== 'number' || isNaN(num)) return '';
-    // Use Intl.NumberFormat to handle thousands separators
-    return num.toLocaleString('id-ID', { maximumFractionDigits: 0 });
-  }, []); // parseCurrency is needed here to handle string inputs like "1.000" or "1000"
-
   // --- Fungsi pembantu untuk mengubah string mata uang menjadi angka ---
   const parseCurrency = useCallback((formattedString) => {
     if (!formattedString) return 0;
@@ -103,6 +94,17 @@ function App() {
     const cleanedString = String(formattedString).replace(/Rp\.\s?|\./g, '').replace(/,/g, '.');
     return parseFloat(cleanedString) || 0;
   }, []);
+
+  // --- Fungsi pembantu baru: Memformat angka dengan pemisah ribuan tanpa simbol mata uang ---
+  // Perbaikan: Menambahkan 'parseCurrency' ke dependency array
+  const formatNumberWithThousandsSeparator = useCallback((amount) => { 
+    // Convert to number first to ensure proper formatting
+    // Gunakan parseCurrency di sini untuk memastikan input string seperti "1.000" ditangani dengan benar
+    const num = typeof amount === 'string' ? parseCurrency(amount) : amount;
+    if (typeof num !== 'number' || isNaN(num)) return '';
+    // Use Intl.NumberFormat to handle thousands separators
+    return num.toLocaleString('id-ID', { maximumFractionDigits: 0 });
+  }, [parseCurrency]); // <--- Dependency 'parseCurrency' DITAMBAHKAN di sini
 
 
   // State untuk Pencatatan Harian
@@ -743,7 +745,7 @@ function App() {
         : new Date(debt.tanggalHutang);
       
       if (!summary[debt.namaSales].lastVisitDate || latestDate > new Date(summary[debt.namaSales].lastVisitDate)) {
-        summary[debt.namaSales].lastVisitDate = latestDate.toISOString().split('T')[0]; // Simpan sebagai YYYY-MM-DD
+        summary[debt.namaSales].lastVisitDate = latestDate.toISOString().split('T')[0]; // Simpan sebagaiYYYY-MM-DD
       }
 
       summary[debt.namaSales].invoices.push({
@@ -908,8 +910,8 @@ function App() {
       - Total Penjualan Tunai: ${formatCurrency(monthlyTotals.totalPenjualanTunai)}
       - Total Pengeluaran Harian: ${formatCurrency(monthlyTotals.totalPengeluaranHarian)}
       - Total Uang Simpan: ${formatCurrency(monthlyTotals.totalUangSimpan)}
-      - Total Hutang Baru Dibuat: ${formatCurrency(monthlyTotals.totalHutangNewMade)}
-      - Total Pembayaran Hutang Sales: ${formatCurrency(monthlyTotals.totalSalesPaymentsDetail)}
+      - Total Hutang Baru Dibuat: ${formatCurrency(monthlyTotals.totalHutangBaruDibuat)}
+      - Total Pembayaran Hutang Sales: ${formatCurrency(monthlyTotals.totalPembayaranHutangSalesDetail)}
       - Perkiraan Saldo Akhir Bulan: ${formatCurrency(dailyRecords.length > 0 ? dailyRecords[dailyRecords.length - 1].saldoHariIni : 0)}.
 
       Berikan analisis singkat dan satu saran keuangan yang actionable berdasarkan data ini. Fokus pada kesehatan arus kas atau pengelolaan hutang. Gunakan bahasa Indonesia.`;
@@ -1675,7 +1677,11 @@ function App() {
                                         // Toggle detail invoices for this sales
                                         const updatedSummary = { ...debtSummaryBySales };
                                         updatedSummary[salesName].showInvoices = !updatedSummary[salesName].showInvoices;
-                                        setIncomingGoodsDebtRecords([...incomingGoodsDebtRecords]); // Trigger re-render
+                                        // Karena debtSummaryBySales adalah memoized, kita perlu membuat salinan baru
+                                        // dari data hutang atau memaksa re-render dengan cara lain jika ingin UI toggle
+                                        // Untuk tujuan demo, ini cukup memicu update state lain
+                                        // yang akan menghitung ulang useMemo ini.
+                                        setIncomingGoodsDebtRecords(prev => [...prev]); 
                                     }}>
                                         <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-bold text-gray-900">{salesName}</td>
                                         <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700">{formatCurrency(data.totalDebt)}</td>
@@ -1763,211 +1769,6 @@ function App() {
                         </button>
                     </div>
                 )}
-            </div>
-          </div>
-        )}
-
-        {/* --- Konten Tab Laporan Bulanan --- */}
-        {activeTab === 'report' && (
-          <div id="monthly-report-section" className="relative">
-            <h2 className="text-2xl sm:text-3xl font-bold text-blue-700 mb-6 text-center">Laporan Keuangan Bulanan</h2>
-
-            {/* Pemilihan Bulan dan Tahun untuk Laporan */}
-            <div className="flex flex-col sm:flex-row justify-center items-center gap-4 mb-8 p-4 bg-lime-50 rounded-lg shadow-inner border border-lime-200">
-              <label htmlFor="selectMonth" className="font-semibold text-gray-700">Pilih Bulan:</label>
-              <select
-                id="selectMonth"
-                value={selectedMonth}
-                onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
-                className="px-3 py-2 sm:px-4 sm:py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-lime-500 focus:border-lime-500 text-sm sm:text-base"
-              >
-                {[...Array(12).keys()].map(i => (
-                  <option key={i + 1} value={i + 1}>
-                    {new Date(0, i).toLocaleString('id-ID', { month: 'long' })}
-                  </option>
-                ))}
-              </select>
-
-              <label htmlFor="selectYear" className="font-semibold text-gray-700">Pilih Tahun:</label>
-              <select
-                id="selectYear"
-                value={selectedYear}
-                onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-                className="px-3 py-2 sm:px-4 sm:py-2 border border-gray-300 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-lime-500 focus:focus:border-lime-500 text-sm sm:text-base"
-              >
-                {years.map(year => (
-                  <option key={year} value={year}>{year}</option>
-                ))}
-              </select>
-
-              <button
-                onClick={handleDownloadPdf}
-                className="mt-4 sm:mt-0 bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg shadow-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-opacity-75 transition duration-200 ease-in-out transform hover:scale-105 text-sm sm:text-base"
-              >
-                Unduh Laporan PDF
-              </button>
-            </div>
-
-            {/* Bagian untuk menampilkan analisis AI */}
-            <div className="mt-6 p-4 sm:p-6 bg-teal-50 rounded-lg shadow-inner border border-teal-200">
-                <h3 className="text-xl sm:text-2xl font-bold text-teal-700 mb-4">✨ Analisis Keuangan Bulan Ini ✨</h3>
-                <p className="text-gray-700 mb-4">Dapatkan analisis singkat dan saran keuangan berdasarkan data laporan bulanan yang Anda pilih.</p>
-                <button
-                    onClick={generateMonthlyAnalysis}
-                    disabled={isGeneratingAnalysis}
-                    className="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-opacity-75 transition duration-200 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    {isGeneratingAnalysis ? 'Menganalisis...' : 'Dapatkan Analisis'}
-                </button>
-                {geminiAnalysisText && (
-                    <div className="mt-4 p-4 bg-white rounded-lg border border-gray-300 shadow-sm">
-                        <h4 className="font-semibold text-gray-800 mb-2">Analisis AI:</h4>
-                        <p className="whitespace-pre-wrap text-gray-700 text-sm">{geminiAnalysisText}</p>
-                    </div>
-                )}
-            </div>
-
-            {/* Konten Laporan yang bisa di-print */}
-            <div ref={laporanRef} className="p-4 sm:p-6 bg-white rounded-lg shadow-md print-area mt-8">
-              <h3 className="text-xl sm:text-2xl font-bold text-gray-800 mt-12 mb-4 text-center">Laporan Keuangan Bulan {new Date(selectedYear, selectedMonth - 1).toLocaleString('id-ID', { month: 'long', year: 'numeric' })}</h3>
-
-              {/* Tabel Ringkasan Bulanan */}
-              <div className="mt-6 overflow-x-auto rounded-xl shadow-xl border border-gray-200 mb-8">
-                <table className="min-w-full divide-y divide-lime-200">
-                  <thead className="bg-lime-600 text-white">
-                    <tr>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider rounded-tl-xl">Kategori</th>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider rounded-tr-xl">Jumlah</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    <tr className="bg-green-50">
-                      <td className="px-3 py-3 sm:px-6 sm:py-4 whitespace-nowrap text-sm sm:text-base font-semibold text-green-700">Total Penjualan Tunai Bulan Ini</td>
-                      <td className="px-3 py-3 sm:px-6 sm:py-4 whitespace-nowrap text-sm sm:text-base font-semibold text-green-700">{formatCurrency(monthlyTotals.totalPenjualanTunai)}</td>
-                    </tr>
-                    <tr className="bg-red-50">
-                      <td className="px-3 py-3 sm:px-6 sm:py-4 whitespace-nowrap text-sm sm:text-base font-semibold text-red-700">Total Pengeluaran Harian Bulan Ini</td>
-                      <td className="px-3 py-3 sm:px-6 sm:py-4 whitespace-nowrap text-sm sm:text-base font-semibold text-red-700">{formatCurrency(monthlyTotals.totalPengeluaranHarian)}</td>
-                    </tr>
-                    <tr>
-                      <td className="px-3 py-3 sm:px-6 sm:py-4 whitespace-nowrap text-sm sm:text-base font-medium text-gray-700">Total Uang Simpan Bulan Ini</td>
-                      <td className="px-3 py-3 sm:px-6 sm:py-4 whitespace-nowrap text-sm sm:text-base font-medium text-gray-700">{formatCurrency(monthlyTotals.totalUangSimpan)}</td>
-                    </tr>
-                    <tr className="bg-blue-50">
-                      <td className="px-3 py-3 sm:px-6 sm:py-4 whitespace-nowrap text-sm sm:text-base font-medium text-blue-700">Total Hutang Baru Dibuat Bulan Ini</td>
-                      <td className="px-3 py-3 sm:px-6 sm:py-4 whitespace-nowrap text-sm sm:text-base font-medium text-blue-700">{formatCurrency(monthlyTotals.totalHutangBaruDibuat)}</td>
-                    </tr>
-                    <tr className="bg-purple-50">
-                      <td className="px-3 py-3 sm:px-6 sm:py-4 whitespace-nowrap text-sm sm:text-base font-medium text-purple-700">Total Pembayaran Hutang Sales Bulan Ini</td>
-                      <td className="px-3 py-3 sm:px-6 sm:py-4 whitespace-nowrap text-sm sm:text-base font-medium text-purple-700">{formatCurrency(monthlyTotals.totalPembayaranHutangSalesDetail)}</td>
-                    </tr>
-                    <tr className="bg-gray-100">
-                      <td className="px-3 py-3 sm:px-6 sm:py-4 whitespace-nowrap text-base sm:text-lg font-bold text-gray-900">Perkiraan Saldo Akhir Bulan</td>
-                      <td className="px-3 py-3 sm:px-6 sm:py-4 whitespace-nowrap text-base sm:text-lg font-bold text-gray-900">
-                        {formatCurrency(
-                          dailyRecords.length > 0 ? dailyRecords[dailyRecords.length - 1].saldoHariIni : 0
-                        )}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <h3 className="text-xl sm:text-2xl font-bold text-gray-800 mt-12 mb-4 text-center">Detail Transaksi Harian Bulan Ini</h3>
-              <div className="mt-6 overflow-x-auto rounded-xl shadow-xl border border-gray-200">
-                <table className="min-w-full divide-y divide-blue-200">
-                  <thead className="bg-blue-600 text-white">
-                    <tr>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider rounded-tl-xl">Tanggal</th>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Total Penjualan</th>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Total Pengeluaran</th>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Saldo Hari Ini</th>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Baki Semalam</th>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Uang Simpan</th>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider rounded-tr-xl">Lihat Detail</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {filteredDailyRecords.length === 0 ? (
-                      <tr>
-                        <td colSpan="7" className="px-3 py-4 sm:px-6 sm:py-6 whitespace-nowrap text-sm sm:text-base text-gray-500 text-center italic">
-                          Tidak ada transaksi harian untuk bulan yang dipilih.
-                        </td>
-                      </tr>
-                    ) : (
-                      filteredDailyRecords.map((entry) => (
-                        <tr key={entry.id} className="hover:bg-blue-50 transition duration-100 ease-in-out">
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium text-gray-900">{formatDate(entry.tanggal)}</td>
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-green-600 font-semibold">{formatCurrency(entry.penjualanTunaiCalculated)}</td>
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-red-700 font-semibold">{formatCurrency(entry.totalPengeluaranHarian)}</td>
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-bold text-gray-800">{formatCurrency(entry.saldoHariIni)}</td>
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700">{formatCurrency(entry.bakiSemalam)}</td>
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-blue-600">{formatCurrency(entry.uangSimpan)}</td>
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium">
-                            <button
-                              onClick={() => showDailyDetailModal(entry)}
-                              className="text-blue-600 hover:text-blue-900 transition duration-150 ease-in-out"
-                            >
-                              Lihat Detail
-                            </button>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              <h3 className="text-xl sm:text-2xl font-bold text-gray-800 mt-12 mb-4 text-center">Ringkasan Hutang Sales Bulan Ini</h3>
-              <div className="mt-6 overflow-x-auto rounded-xl shadow-xl border border-gray-200">
-                <table className="min-w-full divide-y divide-purple-200">
-                  <thead className="bg-purple-600 text-white">
-                    <tr>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider rounded-tl-xl">Tanggal Hutang</th>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Tempo</th>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">No. Invoice</th>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Nama Sales</th>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Jumlah Awal</th>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Sisa Hutang</th>
-                      <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {incomingGoodsDebtRecords.filter(debt => {
-                        const debtDate = new Date(debt.tanggalHutang);
-                        return debtDate.getMonth() + 1 === parseInt(selectedMonth) && debtDate.getFullYear() === parseInt(selectedYear);
-                    }).length === 0 ? (
-                      <tr>
-                        <td colSpan="8" className="px-3 py-4 sm:px-6 sm:py-6 whitespace-nowrap text-sm sm:text-base text-gray-500 text-center italic">
-                          Tidak ada hutang baru tercatat untuk bulan ini.
-                        </td>
-                      </tr>
-                    ) : (
-                      incomingGoodsDebtRecords.filter(debt => {
-                          const debtDate = new Date(debt.tanggalHutang);
-                          return debtDate.getMonth() + 1 === parseInt(selectedMonth) && debtDate.getFullYear() === parseInt(selectedYear);
-                      }).map((hutang) => (
-                        <tr key={hutang.id} className="hover:bg-purple-50 transition duration-100 ease-in-out">
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium text-gray-900">{formatDate(hutang.tanggalHutang)}</td>
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700">{formatDate(hutang.tempo) || 'N/A'}</td>
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700 font-semibold">{hutang.noInvoice}</td>
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700">{hutang.namaSales}</td>
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700">{formatCurrency(hutang.jumlahBarangMasuk)}</td>
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-red-600 font-semibold">{formatCurrency(hutang.sisaHutang)}</td>
-                          <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm">
-                            <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                              hutang.statusPembayaran === 'Lunas' ? 'bg-green-100 text-green-800' :
-                              hutang.statusPembayaran === 'Lunas Sebagian' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
-                            }`}>
-                              {hutang.statusPembayaran}
-                            </span>
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
             </div>
           </div>
         )}

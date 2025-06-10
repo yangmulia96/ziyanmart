@@ -87,12 +87,23 @@ function App() {
     });
   }, []);
 
+  // --- Fungsi pembantu baru: Memformat angka dengan pemisah ribuan tanpa simbol mata uang ---
+  const formatNumberWithThousandsSeparator = useCallback((amount) => {
+    // Convert to number first to ensure proper formatting
+    const num = typeof amount === 'string' ? parseCurrency(amount) : amount;
+    if (typeof num !== 'number' || isNaN(num)) return '';
+    // Use Intl.NumberFormat to handle thousands separators
+    return num.toLocaleString('id-ID', { maximumFractionDigits: 0 });
+  }, []); // parseCurrency is needed here to handle string inputs like "1.000" or "1000"
+
   // --- Fungsi pembantu untuk mengubah string mata uang menjadi angka ---
   const parseCurrency = useCallback((formattedString) => {
     if (!formattedString) return 0;
-    const cleanedString = formattedString.replace(/Rp\.\s?|\./g, '').replace(/,/g, '.');
+    // Menghapus 'Rp.', spasi, dan semua tanda titik ribuan. Mengganti koma desimal dengan titik.
+    const cleanedString = String(formattedString).replace(/Rp\.\s?|\./g, '').replace(/,/g, '.');
     return parseFloat(cleanedString) || 0;
   }, []);
+
 
   // State untuk Pencatatan Harian
   const [dailyRecords, setDailyRecords] = useState([]);
@@ -112,7 +123,7 @@ function App() {
   const [currentExpenseAmount, setCurrentExpenseAmount] = useState(0);
   const [currentExpenseAmountDisplay, setCurrentExpenseAmountDisplay] = useState('');
   const [currentSalesPaymentInvoiceNo, setCurrentSalesPaymentInvoiceNo] = useState('');
-  const [currentSalesPaymentAmount, setCurrentSalesPaymentAmount] = useState(0); // <--- Perbaikan di sini
+  const [currentSalesPaymentAmount, setCurrentSalesPaymentAmount] = useState(0); 
   const [currentSalesPaymentAmountDisplay, setCurrentSalesPaymentAmountDisplay] = useState('');
   const [currentSalesPaymentReturnPotongan, setCurrentSalesPaymentReturnPotongan] = useState(0);
   const [currentSalesPaymentReturnPotonganDisplay, setCurrentSalesPaymentReturnPotonganDisplay] = useState('');
@@ -189,7 +200,7 @@ function App() {
       setIsAuthReady(true);
     });
     return () => unsubscribe();
-  }, [auth]); 
+  }, []); 
 
 
   // --- Firestore Data Fetching Effects ---
@@ -206,7 +217,7 @@ function App() {
     const qDaily = query(dailyRef);
     const unsubscribeDaily = onSnapshot(qDaily, (snapshot) => {
       const records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-                                    .sort((a, b) => new Date(a.tanggal) - new Date(a.tanggal));
+                                    .sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal));
       setDailyRecords(records);
     }, (error) => {
       console.error("Error fetching daily records:", error);
@@ -231,45 +242,48 @@ function App() {
   }, [isAuthReady, userId, showModal]);
 
 
-  // --- Efek untuk menghitung Saldo/Baki Semalam otomatis ---
+  // --- Efek untuk menghitung Saldo/Baki Semalam otomatis (Diperbarui untuk Hari Libur) ---
   useEffect(() => {
     if (newDailyEntry.tanggal && dailyRecords.length > 0) {
-      const recordsForCalculation = editingDailyRecordId
-        ? dailyRecords.filter(rec => rec.id !== editingDailyRecordId)
-        : dailyRecords;
+        const currentDate = new Date(newDailyEntry.tanggal);
+        currentDate.setHours(0, 0, 0, 0); // Normalisasi ke awal hari
 
-      const sortedRecords = [...recordsForCalculation].sort((a, b) => new Date(b.tanggal) - new Date(a.tanggal));
-      
-      let prevDayRecord = null;
-      const currentDate = new Date(newDailyEntry.tanggal);
-      
-      for (let i = 0; i < sortedRecords.length; i++) {
-          const recordDate = new Date(sortedRecords[i].tanggal);
-          if (recordDate < currentDate) {
-              prevDayRecord = sortedRecords[i];
-              break;
-          }
-      }
+        // Sortir record dari yang terbaru ke terlama untuk mencari tanggal sebelumnya
+        const sortedRecords = [...dailyRecords].sort((a, b) => new Date(b.tanggal).getTime() - new Date(a.tanggal).getTime());
 
-      if (prevDayRecord) {
-        const calculatedBakiSemalam = prevDayRecord.saldoHariIni - prevDayRecord.uangSimpan;
-        setNewDailyEntry(prev => ({
-          ...prev,
-          bakiSemalam: calculatedBakiSemalam,
-        }));
-      } else {
-        setNewDailyEntry(prev => ({
-          ...prev,
-          bakiSemalam: 0,
-        }));
-      }
+        let prevDayRecord = null;
+        for (let i = 0; i < sortedRecords.length; i++) {
+            const recordDate = new Date(sortedRecords[i].tanggal);
+            recordDate.setHours(0, 0, 0, 0); // Normalisasi ke awal hari
+
+            // Cari record yang tanggalnya sebelum tanggal saat ini (newDailyEntry.tanggal)
+            if (recordDate < currentDate) {
+                prevDayRecord = sortedRecords[i];
+                break; // Hentikan pencarian setelah menemukan record terdekat sebelumnya
+            }
+        }
+
+        if (prevDayRecord) {
+            const calculatedBakiSemalam = prevDayRecord.saldoHariIni - prevDayRecord.uangSimpan;
+            setNewDailyEntry(prev => ({
+                ...prev,
+                bakiSemalam: calculatedBakiSemalam,
+            }));
+        } else {
+            // Jika tidak ada record sebelumnya, baki semalam adalah 0
+            setNewDailyEntry(prev => ({
+                ...prev,
+                bakiSemalam: 0,
+            }));
+        }
     } else {
-      setNewDailyEntry(prev => ({
-        ...prev,
-        bakiSemalam: 0,
-      }));
+        // Jika tidak ada tanggal yang dipilih atau tidak ada record sama sekali, baki semalam adalah 0
+        setNewDailyEntry(prev => ({
+            ...prev,
+            bakiSemalam: 0,
+        }));
     }
-  }, [newDailyEntry.tanggal, dailyRecords, editingDailyRecordId]);
+}, [newDailyEntry.tanggal, dailyRecords, editingDailyRecordId]);
 
 
   // --- Perhitungan Otomatis untuk Pencatatan Harian ---
@@ -298,30 +312,62 @@ function App() {
     totalSalesPaymentsForDaily,
   ]);
 
+
+  // --- Efek untuk menginisialisasi tampilan input numerik dengan pemisah ribuan ---
+  useEffect(() => {
+    setSaldoHariIniInputDisplay(formatNumberWithThousandsSeparator(newDailyEntry.saldoHariIni));
+    setUangSimpanInputDisplay(formatNumberWithThousandsSeparator(newDailyEntry.uangSimpan));
+    setCurrentExpenseAmountDisplay(formatNumberWithThousandsSeparator(currentExpenseAmount));
+    setCurrentSalesPaymentAmountDisplay(formatNumberWithThousandsSeparator(currentSalesPaymentAmount));
+    setCurrentSalesPaymentReturnPotonganDisplay(formatNumberWithThousandsSeparator(currentSalesPaymentReturnPotongan));
+    setJumlahBarangMasukInputDisplay(formatNumberWithThousandsSeparator(newHutangEntry.jumlahBarangMasuk));
+  }, [
+    newDailyEntry.saldoHariIni, newDailyEntry.uangSimpan,
+    currentExpenseAmount, currentSalesPaymentAmount, currentSalesPaymentReturnPotongan,
+    newHutangEntry.jumlahBarangMasuk,
+    formatNumberWithThousandsSeparator
+  ]);
+
+
   // --- Handler untuk Input Terformat ---
+  // Digunakan untuk state yang merupakan bagian dari objek (e.g., newDailyEntry.saldoHariIni)
   const handleObjectNumericInputChange = useCallback((e, setDisplayState, setObjectState, fieldName) => {
-    const value = e.target.value;
-    setDisplayState(value);
+    const rawValue = e.target.value;
+    const numericValue = parseCurrency(rawValue); // Parse string input ke nilai numerik
+    
+    // Tampilkan nilai yang diformat dengan pemisah ribuan saat mengetik
+    setDisplayState(formatNumberWithThousandsSeparator(rawValue)); 
+    
+    // Simpan nilai numerik aktual ke state objek
     setObjectState(prev => ({
       ...prev,
-      [fieldName]: parseCurrency(value),
+      [fieldName]: numericValue,
     }));
-  }, [parseCurrency]);
+  }, [parseCurrency, formatNumberWithThousandsSeparator]);
 
+  // Digunakan untuk state numerik langsung (e.g., currentExpenseAmount)
   const handleDirectNumericInputChange = useCallback((e, setDisplayState, setNumericState) => {
-    const value = e.target.value;
-    setDisplayState(value);
-    setNumericState(parseCurrency(value));
-  }, [parseCurrency]);
+    const rawValue = e.target.value;
+    const numericValue = parseCurrency(rawValue); // Parse string input ke nilai numerik
 
+    // Tampilkan nilai yang diformat dengan pemisah ribuan saat mengetik
+    setDisplayState(formatNumberWithThousandsSeparator(rawValue));
+    
+    // Simpan nilai numerik aktual ke state
+    setNumericState(numericValue);
+  }, [parseCurrency, formatNumberWithThousandsSeparator]);
+
+  // Saat input kehilangan fokus, terapkan format mata uang lengkap (Rp.)
   const handleFormattedInputBlur = useCallback((e, valueToFormat, setDisplayState) => {
     setDisplayState(formatCurrency(valueToFormat));
   }, [formatCurrency]);
 
+  // Saat input mendapatkan fokus, tampilkan angka dengan pemisah ribuan (tanpa Rp.)
   const handleFormattedInputFocus = useCallback((e, valueToDisplay, setDisplayState) => {
     e.target.select();
-    setDisplayState(valueToDisplay === 0 ? '' : valueToDisplay.toString());
-  }, []);
+    // Tampilkan nilai yang diformat dengan pemisah ribuan, agar lebih mudah diedit
+    setDisplayState(formatNumberWithThousandsSeparator(valueToDisplay));
+  }, [formatNumberWithThousandsSeparator]);
 
 
   // --- Logika Pencatatan Harian ---
@@ -518,8 +564,8 @@ function App() {
         detailedExpenses: [...recordToEdit.detailedExpenses],
         salesPayments: [...recordToEdit.salesPayments],
       });
-      setSaldoHariIniInputDisplay(formatCurrency(recordToEdit.saldoHariIni));
-      setUangSimpanInputDisplay(formatCurrency(recordToEdit.uangSimpan));
+      setSaldoHariIniInputDisplay(formatNumberWithThousandsSeparator(recordToEdit.saldoHariIni));
+      setUangSimpanInputDisplay(formatNumberWithThousandsSeparator(recordToEdit.uangSimpan));
       setCurrentExpenseDescription(''); setCurrentExpenseAmount(0); setCurrentExpenseAmountDisplay('');
       setCurrentSalesPaymentInvoiceNo(''); setCurrentSalesPaymentAmount(0); setCurrentSalesPaymentAmountDisplay('');
       setCurrentSalesPaymentReturnPotongan(0); setCurrentSalesPaymentReturnPotonganDisplay('');
@@ -534,11 +580,11 @@ function App() {
     const { name, value } = e.target;
     if (name === 'jumlahBarangMasuk') {
         setNewHutangEntry(prev => ({ ...prev, [name]: parseCurrency(value) }));
-        setJumlahBarangMasukInputDisplay(value);
+        setJumlahBarangMasukInputDisplay(formatNumberWithThousandsSeparator(value));
     } else {
         setNewHutangEntry(prev => ({ ...prev, [name]: value }));
     }
-  }, [parseCurrency]);
+  }, [parseCurrency, formatNumberWithThousandsSeparator]);
 
   const handleJumlahBarangMasukBlur = useCallback((e) => {
     handleFormattedInputBlur(e, newHutangEntry.jumlahBarangMasuk, setJumlahBarangMasukInputDisplay);
@@ -622,7 +668,7 @@ function App() {
         jumlahBarangMasuk: recordToEdit.jumlahBarangMasuk,
         note: recordToEdit.note,
       });
-      setJumlahBarangMasukInputDisplay(formatCurrency(recordToEdit.jumlahBarangMasuk));
+      setJumlahBarangMasukInputDisplay(formatNumberWithThousandsSeparator(recordToEdit.jumlahBarangMasuk));
       setActiveTab('hutang');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -675,6 +721,51 @@ function App() {
   const outstandingInvoices = useMemo(() => {
     return incomingGoodsDebtRecords.filter(debt => debt.sisaHutang > 0);
   }, [incomingGoodsDebtRecords]);
+
+  // Fitur baru: Ringkasan Hutang per Sales
+  const debtSummaryBySales = useMemo(() => {
+    const summary = {};
+    incomingGoodsDebtRecords.forEach(debt => {
+      if (!summary[debt.namaSales]) {
+        summary[debt.namaSales] = {
+          totalDebt: 0,
+          outstandingDebt: 0,
+          lastVisitDate: null,
+          invoices: [],
+        };
+      }
+      summary[debt.namaSales].totalDebt += debt.jumlahBarangMasuk;
+      summary[debt.namaSales].outstandingDebt += debt.sisaHutang;
+      
+      // Update lastVisitDate based on the latest payment or debt entry date
+      const latestDate = debt.payments && debt.payments.length > 0
+        ? new Date(Math.max(...debt.payments.map(p => new Date(p.tanggalPembayaran))))
+        : new Date(debt.tanggalHutang);
+      
+      if (!summary[debt.namaSales].lastVisitDate || latestDate > new Date(summary[debt.namaSales].lastVisitDate)) {
+        summary[debt.namaSales].lastVisitDate = latestDate.toISOString().split('T')[0]; // Simpan sebagai YYYY-MM-DD
+      }
+
+      summary[debt.namaSales].invoices.push({
+        noInvoice: debt.noInvoice,
+        tanggalHutang: debt.tanggalHutang,
+        tempo: debt.tempo,
+        jumlahBarangMasuk: debt.jumlahBarangMasuk,
+        sisaHutang: debt.sisaHutang,
+        statusPembayaran: debt.statusPembayaran,
+        payments: debt.payments,
+        id: debt.id,
+      });
+    });
+
+    // Sort invoices within each sales summary by due date
+    Object.values(summary).forEach(sales => {
+        sales.invoices.sort((a, b) => new Date(a.tempo) - new Date(b.tempo));
+    });
+
+    return summary;
+  }, [incomingGoodsDebtRecords]);
+
 
   const years = useMemo(() => Array.from({ length: 5 }, (_, i) => currentYear - 2 + i), [currentYear]);
 
@@ -817,8 +908,8 @@ function App() {
       - Total Penjualan Tunai: ${formatCurrency(monthlyTotals.totalPenjualanTunai)}
       - Total Pengeluaran Harian: ${formatCurrency(monthlyTotals.totalPengeluaranHarian)}
       - Total Uang Simpan: ${formatCurrency(monthlyTotals.totalUangSimpan)}
-      - Total Hutang Baru Dibuat: ${formatCurrency(monthlyTotals.totalHutangBaruDibuat)}
-      - Total Pembayaran Hutang Sales: ${formatCurrency(monthlyTotals.totalPembayaranHutangSalesDetail)}
+      - Total Hutang Baru Dibuat: ${formatCurrency(monthlyTotals.totalHutangNewMade)}
+      - Total Pembayaran Hutang Sales: ${formatCurrency(monthlyTotals.totalSalesPaymentsDetail)}
       - Perkiraan Saldo Akhir Bulan: ${formatCurrency(dailyRecords.length > 0 ? dailyRecords[dailyRecords.length - 1].saldoHariIni : 0)}.
 
       Berikan analisis singkat dan satu saran keuangan yang actionable berdasarkan data ini. Fokus pada kesehatan arus kas atau pengelolaan hutang. Gunakan bahasa Indonesia.`;
@@ -1128,7 +1219,7 @@ function App() {
                   className="mt-1 block w-full px-3 py-2 sm:px-4 sm:py-2 border border-gray-300 bg-gray-100 rounded-lg shadow-sm text-base cursor-not-allowed font-medium"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  *Otomatis: Saldo Hari Ini kemarin - Uang Simpan kemarin.
+                  *Otomatis: Saldo Hari Ini terakhir - Uang Simpan terakhir (akan mencari tanggal sebelumnya jika ada hari libur).
                 </p>
               </div>
               {/* Saldo Hari Ini (Manual) */}
@@ -1378,6 +1469,7 @@ function App() {
                             </ul>
                           ) : 'N/A'}
                         </td>
+                        {/* Perbaikan di sini: Menggunakan entry.totalPengeluaranHarian */}
                         <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-red-700 font-semibold">{formatCurrency(entry.totalPengeluaranHarian)}</td>
                         <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium">
                           <button
@@ -1555,6 +1647,78 @@ function App() {
                 Total Sisa Hutang Keseluruhan: {formatCurrency(totalOutstandingHutang)}
               </p>
             </div>
+
+            {/* Ringkasan Hutang per Sales (Fitur Baru) */}
+            <h3 className="text-xl sm:text-2xl font-bold text-gray-800 mt-12 mb-4 text-center">Ringkasan Hutang per Sales</h3>
+            <div className="mt-6 overflow-x-auto rounded-xl shadow-xl border border-gray-200">
+                <table className="min-w-full divide-y divide-green-200">
+                    <thead className="bg-green-600 text-white">
+                        <tr>
+                            <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider rounded-tl-xl">Nama Sales</th>
+                            <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Total Hutang Awal</th>
+                            <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Sisa Hutang</th>
+                            <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider">Kunjungan Terakhir</th>
+                            <th scope="col" className="px-3 py-3 sm:px-6 sm:py-4 text-left text-xs sm:text-sm font-bold uppercase tracking-wider rounded-tr-xl">Detail</th>
+                        </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                        {Object.keys(debtSummaryBySales).length === 0 ? (
+                            <tr>
+                                <td colSpan="5" className="px-3 py-4 sm:px-6 sm:py-6 whitespace-nowrap text-sm sm:text-base text-gray-500 text-center italic">
+                                    Belum ada ringkasan hutang per sales.
+                                </td>
+                            </tr>
+                        ) : (
+                            Object.entries(debtSummaryBySales).map(([salesName, data]) => (
+                                <React.Fragment key={salesName}>
+                                    <tr className="hover:bg-green-50 transition duration-100 ease-in-out cursor-pointer" onClick={() => {
+                                        // Toggle detail invoices for this sales
+                                        const updatedSummary = { ...debtSummaryBySales };
+                                        updatedSummary[salesName].showInvoices = !updatedSummary[salesName].showInvoices;
+                                        setIncomingGoodsDebtRecords([...incomingGoodsDebtRecords]); // Trigger re-render
+                                    }}>
+                                        <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-bold text-gray-900">{salesName}</td>
+                                        <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700">{formatCurrency(data.totalDebt)}</td>
+                                        <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-red-600 font-semibold">{formatCurrency(data.outstandingDebt)}</td>
+                                        <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm text-gray-700">{formatDate(data.lastVisitDate)}</td>
+                                        <td className="px-3 py-4 sm:px-6 sm:py-4 whitespace-nowrap text-xs sm:text-sm font-medium">
+                                            <button className="text-blue-600 hover:text-blue-900 transition duration-150 ease-in-out">
+                                                {data.showInvoices ? 'Sembunyikan' : 'Lihat Invoice'}
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    {/* Detail Invoice untuk Sales Tertentu */}
+                                    {data.showInvoices && data.invoices.map(invoice => (
+                                        <tr key={invoice.id} className="bg-gray-50 hover:bg-gray-100 transition duration-100 ease-in-out text-sm">
+                                            <td className="pl-8 pr-3 py-2 whitespace-nowrap font-medium text-gray-700"></td> {/* Indent */}
+                                            <td colSpan="4" className="pr-3 py-2">
+                                                <div className="flex justify-between items-center text-xs">
+                                                    <span>**Invoice:** {invoice.noInvoice}</span>
+                                                    <span>**Hutang Awal:** {formatCurrency(invoice.jumlahBarangMasuk)}</span>
+                                                    <span className="font-semibold text-red-600">**Sisa:** {formatCurrency(invoice.sisaHutang)}</span>
+                                                    <span className={`px-2 py-0.5 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                                        invoice.statusPembayaran === 'Lunas' ? 'bg-green-100 text-green-800' :
+                                                        invoice.statusPembayaran === 'Lunas Sebagian' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+                                                    }`}>
+                                                        {invoice.statusPembayaran}
+                                                    </span>
+                                                    <button
+                                                        onClick={() => showHistoryModal(invoice)}
+                                                        className="text-blue-600 hover:text-blue-900 transition duration-150 ease-in-out text-xs ml-2"
+                                                    >
+                                                        Riwayat Bayar
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </React.Fragment>
+                            ))
+                        )}
+                    </tbody>
+                </table>
+            </div>
+
 
             {/* Bagian Gemini AI untuk Pengingat Hutang */}
             <div className="mt-12 p-4 sm:p-6 bg-blue-50 rounded-lg shadow-inner border border-blue-200">
